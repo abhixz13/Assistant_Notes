@@ -1,0 +1,71 @@
+
+cat > .gitignore << 'EOF'
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Model files (too large for GitHub)
+models/*.gguf
+models/*.bin
+models/*.safetensors
+
+# Audio files
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# Transcripts and data
+data/transcripts/
+data/notes/
+data/metadata/
+
+# Logs
+logs/
+*.log
+
+# Test outputs
+test_output/
+test_*.py
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp

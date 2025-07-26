@@ -1,0 +1,94 @@
+# AI Notes Assistant Configuration
+
+# Audio Settings
+audio:
+  sample_rate: 16000
+  channels: 1
+  chunk_size: 1024
+  format: "wav"
+  blackhole_device: "BlackHole 2ch"
+  recording_duration: 300  # seconds, 0 for continuous
+
+# Transcription Settings
+transcription:
+  model: "openai-whisper"
+  model_size: "small"  # tiny, base, small, medium, large
+  language: "en"
+  chunk_duration: 5  # seconds per chunk for real-time
+  sample_rate: 16000
+  channels: 1
+  real_time_enabled: true
+  batch_processing_enabled: true
+  output_format: "structured"  # structured, json, plain
+  key_points_extraction: true
+  technical_terms_extraction: true
+
+# Summarization Settings
+summarization:
+  model: "mixtral-8x7b"
+  model_path: "models/mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
+  max_tokens: 2048  # Increased for enhanced prompts
+  temperature: 0.7
+  context_length: 8192  # Mixtral's context window
+  top_p: 0.9
+  top_k: 40
+  repeat_penalty: 1.1
+  # Enhanced prompt settings
+  concept_extraction_tokens: 512
+  summary_tokens: 300
+  discussion_points_tokens: 1500
+  additional_details_tokens: 1500
+  title_tokens: 100
+  section_break_threshold: 300  # seconds between sections
+
+# Export Settings
+export:
+  google_docs:
+    enabled: true
+    template_id: ""  # Optional: Google Docs template ID
+    folder_id: ""    # Optional: Google Drive folder ID
+  
+  notion:
+    enabled: true
+    database_id: ""  # Notion database ID for notes
+    page_id: ""      # Parent page ID (optional)
+
+# Storage Settings
+storage:
+  base_path: "data"
+  transcripts_path: "data/transcripts"
+  notes_path: "data/notes"
+  metadata_path: "data/metadata"
+  backup_enabled: true
+  max_file_age_days: 30
+
+# Note Structure
+notes:
+  sections:
+    - "Key Points"
+    - "Tools Mentioned"
+    - "Concepts Explained"
+    - "Q&A Section"
+    - "Additional Resources"
+  
+  metadata_fields:
+    - "title"
+    - "tags"
+    - "topics"
+    - "youtube_url"
+    - "timestamp"
+    - "duration"
+    - "model_used"
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+  max_size_mb: 10
+  backup_count: 5
+
+# Development
+development:
+  debug_mode: false
+  test_mode: false
+  mock_apis: false

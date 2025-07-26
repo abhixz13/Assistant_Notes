@@ -1,0 +1,42 @@
+# Core dependencies
+pyaudio==0.2.11
+sounddevice==0.4.6
+numpy==1.24.3
+PyYAML==6.0.1
+python-dotenv==1.0.0
+
+# Audio processing
+librosa==0.10.1
+scipy==1.11.1
+
+# Transcription (simpler alternative)
+openai-whisper==20231117
+
+# Summarization (LLaMA)
+llama-cpp-python==0.2.11
+transformers==4.35.0
+torch==2.1.0
+
+# Export modules
+google-api-python-client==2.108.0
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+notion-client==2.2.1
+
+# Markdown processing
+markdown==3.5.1
+python-markdown-math==0.8
+
+# CLI and utilities
+click==8.1.7
+rich==13.7.0
+tqdm==4.66.1
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Development
+black==23.11.0
+flake8==6.1.0
