@@ -148,6 +148,16 @@ class ConfigManager:
                 'debug_mode': False,
                 'test_mode': False,
                 'mock_apis': False
+            },
+            'custom_model': {
+                'name': 'Deepseek-coder',
+                'api': {
+                    'type': 'openai-compatible',
+                    'url': 'http://localhost:11434/v1'
+                },
+                'chat': {
+                    'model': 'deepseek-coder:latest'
+                }
             }
         }
     
@@ -212,6 +222,10 @@ class ConfigManager:
     def get_logging_config(self) -> Dict[str, Any]:
         """Get logging configuration."""
         return self._config.get('logging', {})
+    
+    def get_custom_model_config(self) -> Dict[str, Any]:
+        """Get custom model configuration."""
+        return self._config.get('custom_model', {})
     
     def is_debug_mode(self) -> bool:
         """Check if debug mode is enabled."""

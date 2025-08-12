@@ -166,7 +166,17 @@ class AudioCapture:
         
         self.is_recording = True
         self.audio_buffer = []
+        self.output_path = output_path
         
+        # Start recording in a separate thread
+        self.recording_thread = threading.Thread(target=self._record_continuous_thread, args=(max_duration,))
+        self.recording_thread.daemon = True
+        self.recording_thread.start()
+        
+        self.logger.info("Continuous recording started in background thread")
+    
+    def _record_continuous_thread(self, max_duration: Optional[int] = None) -> None:
+        """Background thread for continuous recording."""
         try:
             # Start recording stream
             with sd.InputStream(
@@ -188,12 +198,11 @@ class AudioCapture:
                 # Save recorded audio
                 if self.audio_buffer:
                     audio_data = np.concatenate(self.audio_buffer, axis=0)
-                    self._save_wav_file(audio_data, output_path)
-                    self.logger.info(f"Continuous recording saved: {output_path}")
+                    self._save_wav_file(audio_data, self.output_path)
+                    self.logger.info(f"Continuous recording saved: {self.output_path}")
                 
         except Exception as e:
             self.logger.error(f"Continuous recording failed: {e}")
-            raise
         finally:
             self.is_recording = False
     
@@ -201,6 +210,13 @@ class AudioCapture:
         """Stop continuous recording."""
         self.logger.info("Stopping continuous recording")
         self.is_recording = False
+        
+        # Wait for recording thread to finish
+        if hasattr(self, 'recording_thread') and self.recording_thread and self.recording_thread.is_alive():
+            self.logger.info("Waiting for recording thread to finish...")
+            self.recording_thread.join(timeout=5)  # Wait up to 5 seconds
+            if self.recording_thread.is_alive():
+                self.logger.warning("Recording thread did not finish in time")
     
     def _save_wav_file(self, audio_data: np.ndarray, output_path: str) -> None:
         """

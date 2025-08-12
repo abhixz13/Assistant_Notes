@@ -19,7 +19,7 @@ from .whisper_local import WhisperTranscriber
 logger = get_logger("transcription.utils")
 
 
-def transcribe_audio_file(audio_file_path: str, model_size: str = "small") -> Dict:
+def transcribe_audio_file(audio_file_path: str, model_size: str = "medium") -> Dict:
     """
     Transcribe an audio file using Whisper.
     
@@ -43,18 +43,78 @@ def transcribe_audio_file(audio_file_path: str, model_size: str = "small") -> Di
         # Load audio file
         audio_data, sample_rate = sf.read(audio_file_path)
         
+        # Check audio quality
+        logger.info(f"Audio file info: shape={audio_data.shape}, sample_rate={sample_rate}, dtype={audio_data.dtype}")
+        
+        # Check if audio has meaningful content
+        audio_rms = np.sqrt(np.mean(audio_data**2))
+        logger.info(f"Audio RMS level: {audio_rms}")
+        
+        if audio_rms < 0.001:  # Very low audio level
+            logger.warning("Audio file has very low volume - may not contain speech")
+        
         # Ensure audio is in the right format
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
         
-        # Transcribe the entire file
+        # Normalize audio if needed
+        if np.max(np.abs(audio_data)) > 1.0:
+            audio_data = audio_data / np.max(np.abs(audio_data))
+            logger.info("Audio normalized to prevent clipping")
+        
+        # Transcribe the entire file with improved settings
         logger.info("Transcribing audio file...")
         result = transcriber.model.transcribe(
             audio_data,
             language="en",
             task="transcribe",
-            fp16=False
+            fp16=False,
+            verbose=True,  # More detailed output
+            word_timestamps=True,  # Get word-level timestamps
+            condition_on_previous_text=True,  # Better context
+            temperature=0.0,  # More deterministic
+            compression_ratio_threshold=2.4,  # Better quality threshold
+            logprob_threshold=-1.0,  # Lower threshold for more content
+            no_speech_threshold=0.6  # Lower threshold to capture more speech
         )
+        
+        # Check if transcription produced meaningful content
+        full_text = result.get('text', '').strip()
+        segments = result.get('segments', [])
+        
+        # Check for common "no audio" patterns
+        no_audio_patterns = ['you', 'um', 'uh', 'ah', 'hmm', '...', '']
+        meaningful_content = False
+        
+        if full_text and len(full_text) > 10:
+            # Check if text contains more than just filler words
+            words = full_text.lower().split()
+            meaningful_words = [w for w in words if w not in no_audio_patterns and len(w) > 2]
+            meaningful_content = len(meaningful_words) > 5
+        
+        if not meaningful_content:
+            logger.warning("No meaningful audio content detected")
+            # Create a "no audio" transcript
+            transcript = {
+                "metadata": {
+                    "audio_file": audio_file_path,
+                    "model_size": model_size,
+                    "duration_seconds": len(audio_data) / sample_rate if 'audio_data' in locals() else 0,
+                    "segments_count": 0,
+                    "created_at": datetime.now().isoformat(),
+                    "duration_formatted": "00:00",
+                    "youtube_url": None,
+                    "title": "No Audio Content Detected",
+                    "generated_at": datetime.now().isoformat(),
+                    "error": "No meaningful audio content detected. Please check: 1) Audio is playing, 2) BlackHole is routing audio correctly, 3) Recording duration was sufficient"
+                },
+                "segments": [],
+                "full_text": "",
+                "key_points": [],
+                "technical_terms": {},
+                "formatted_notes": "# AI Notes Assistant - No Audio Detected\n\nNo meaningful audio content was detected in the recording.\n\n## Possible Issues:\n- YouTube video was not playing\n- Audio not routed through BlackHole\n- Recording duration too short\n- Audio quality issues\n\nPlease try again with audio playing."
+            }
+            return transcript
         
         # Create transcript structure
         transcript = _create_transcript_from_result(

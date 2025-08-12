@@ -26,7 +26,7 @@ class WhisperTranscriber:
     Real-time transcription using OpenAI Whisper model.
     """
     
-    def __init__(self, model_size: str = "small"):
+    def __init__(self, model_size: str = "medium"): 
         """
         Initialize the Whisper transcriber.
         

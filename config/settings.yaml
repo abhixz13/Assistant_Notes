@@ -12,7 +12,7 @@ audio:
 # Transcription Settings
 transcription:
   model: "openai-whisper"
-  model_size: "small"  # tiny, base, small, medium, large
+  model_size: "large"  # tiny, base, small, medium, large
   language: "en"
   chunk_duration: 5  # seconds per chunk for real-time
   sample_rate: 16000
@@ -92,3 +92,12 @@ development:
   debug_mode: false
   test_mode: false
   mock_apis: false
+
+# Custom Model Configuration
+custom_model:
+  name: "Deepseek-coder"
+  api:
+    type: "openai-compatible"
+    url: "http://localhost:11434/v1"
+  chat:
+    model: "deepseek-coder:latest"
