@@ -58,6 +58,7 @@ class ConfigManager:
                 'NOTION_DATABASE_ID': os.getenv('NOTION_DATABASE_ID', ''),
                 'LLAMA_MODEL_PATH': os.getenv('LLAMA_MODEL_PATH', 'models/llama-2-7b.gguf'),
                 'WHISPER_MODEL_PATH': os.getenv('WHISPER_MODEL_PATH', 'models/whisper-base.gguf'),
+                'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', ''),
                 'DEBUG_MODE': os.getenv('DEBUG_MODE', 'false').lower() == 'true',
                 'TEST_MODE': os.getenv('TEST_MODE', 'false').lower() == 'true',
                 'LOG_LEVEL': os.getenv('LOG_LEVEL', 'INFO'),
@@ -92,7 +93,7 @@ class ConfigManager:
                 'overlap': 5
             },
             'summarization': {
-                'model': 'llama-2-7b',
+                'model': 'deepseek',
                 'model_path': 'models/llama-2-7b.gguf',
                 'max_tokens': 2048,
                 'temperature': 0.7,
@@ -158,6 +159,12 @@ class ConfigManager:
                 'chat': {
                     'model': 'deepseek-coder:latest'
                 }
+            },
+            'openai': {
+                'api_key': 'sk-placeholder-key-loaded-from-env',
+                'api_url': 'https://api.openai.com/v1',
+                'model': 'gpt-4o-mini',
+                'timeout': 120
             }
         }
     
@@ -226,6 +233,10 @@ class ConfigManager:
     def get_custom_model_config(self) -> Dict[str, Any]:
         """Get custom model configuration."""
         return self._config.get('custom_model', {})
+    
+    def get_openai_config(self) -> Dict[str, Any]:
+        """Get OpenAI configuration."""
+        return self._config.get('openai', {})
     
     def is_debug_mode(self) -> bool:
         """Check if debug mode is enabled."""

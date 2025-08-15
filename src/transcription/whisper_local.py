@@ -43,7 +43,7 @@ class WhisperTranscriber:
         self.audio_config = config.get_audio_config()
         
         # Transcription settings
-        self.chunk_duration = 5  # seconds per chunk
+        self.chunk_duration = 15  # seconds per chunk
         self.sample_rate = self.audio_config.get('sample_rate', 16000)
         self.channels = self.audio_config.get('channels', 1)
         
@@ -185,12 +185,18 @@ class WhisperTranscriber:
             if audio_chunk.dtype != np.float32:
                 audio_chunk = audio_chunk.astype(np.float32)
             
-            # Transcribe using Whisper
+            # Transcribe using Whisper with low-quality audio settings
             result = self.model.transcribe(
                 audio_chunk,
                 language="en",
                 task="transcribe",
-                fp16=False
+                fp16=False,
+                temperature=0.4,  # Slightly higher for noisy audio
+                compression_ratio_threshold=2,  # Lower threshold for low-quality audio
+                logprob_threshold=-1.0,  # Much lower threshold for noisy audio
+                no_speech_threshold=0.2,  # Much lower threshold to capture more speech
+                best_of=2,  # Try multiple decodings (smaller for chunks)
+                beam_size=2  # Use beam search (smaller for chunks)
             )
             
             return result["text"].strip()

@@ -2,11 +2,11 @@
 
 # Audio Settings
 audio:
-  sample_rate: 16000
+  sample_rate: 48000
   channels: 1
   chunk_size: 1024
   format: "wav"
-  blackhole_device: "BlackHole 2ch"
+  blackhole_device: "BlackHole 2ch"  # Changed back to BlackHole for system audio
   recording_duration: 300  # seconds, 0 for continuous
 
 # Transcription Settings
@@ -15,7 +15,7 @@ transcription:
   model_size: "large"  # tiny, base, small, medium, large
   language: "en"
   chunk_duration: 5  # seconds per chunk for real-time
-  sample_rate: 16000
+  sample_rate: 48000
   channels: 1
   real_time_enabled: true
   batch_processing_enabled: true
@@ -25,11 +25,11 @@ transcription:
 
 # Summarization Settings
 summarization:
-  model: "mixtral-8x7b"
-  model_path: "models/mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
+  model: "deepseek"  # Use DeepSeek via Ollama
+  model_path: "http://localhost:11434/v1"  # Ollama API endpoint
   max_tokens: 2048  # Increased for enhanced prompts
   temperature: 0.7
-  context_length: 8192  # Mixtral's context window
+  context_length: 8192  # Context window
   top_p: 0.9
   top_k: 40
   repeat_penalty: 1.1
@@ -40,6 +40,13 @@ summarization:
   additional_details_tokens: 1500
   title_tokens: 100
   section_break_threshold: 300  # seconds between sections
+  
+  # Topic-based summary settings
+  topic_summary_tokens: 300  # Reasonable size for topic summaries
+  topic_summary_max_workers: 3
+  
+  # Expertise level settings
+  default_expertise_level: "moderate"  # beginner, moderate, expert
 
 # Export Settings
 export:
@@ -101,3 +108,10 @@ custom_model:
     url: "http://localhost:11434/v1"
   chat:
     model: "deepseek-coder:latest"
+
+# OpenAI Configuration
+openai:
+  api_key: "sk-placeholder-key-loaded-from-env"
+  api_url: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+  timeout: 120

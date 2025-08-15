@@ -43,8 +43,27 @@ def transcribe_audio_file(audio_file_path: str, model_size: str = "medium") -> D
         # Load audio file
         audio_data, sample_rate = sf.read(audio_file_path)
         
+        # Make a copy to avoid stride issues
+        audio_data = audio_data.copy()
+        
         # Check audio quality
         logger.info(f"Audio file info: shape={audio_data.shape}, sample_rate={sample_rate}, dtype={audio_data.dtype}")
+        
+        # Resample audio to 16kHz for Whisper if needed
+        if sample_rate != 16000:
+            logger.info(f"Resampling audio from {sample_rate}Hz to 16000Hz for Whisper")
+            from scipy import signal
+            try:
+                # Calculate resampling ratio
+                resample_ratio = 16000 / sample_rate
+                new_length = int(len(audio_data) * resample_ratio)
+                audio_data = signal.resample(audio_data, new_length)
+                sample_rate = 16000
+                logger.info(f"Audio resampled to {sample_rate}Hz, new shape: {audio_data.shape}")
+            except ImportError:
+                logger.warning("scipy not available, using original sample rate")
+            except Exception as e:
+                logger.warning(f"Error resampling audio: {e}")
         
         # Check if audio has meaningful content
         audio_rms = np.sqrt(np.mean(audio_data**2))
@@ -57,13 +76,40 @@ def transcribe_audio_file(audio_file_path: str, model_size: str = "medium") -> D
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
         
+        # Enhanced audio preprocessing for low-quality audio
+        if audio_rms < 0.01:  # Very low volume audio
+            logger.info("Applying audio enhancement for low-quality audio")
+            # Amplify audio if it's too quiet
+            if audio_rms > 0:
+                amplification_factor = min(10.0, 0.01 / audio_rms)  # Amplify up to 10x
+                audio_data = audio_data * amplification_factor
+                logger.info(f"Audio amplified by factor: {amplification_factor}")
+        
         # Normalize audio if needed
         if np.max(np.abs(audio_data)) > 1.0:
             audio_data = audio_data / np.max(np.abs(audio_data))
             logger.info("Audio normalized to prevent clipping")
         
-        # Transcribe the entire file with improved settings
-        logger.info("Transcribing audio file...")
+        # Apply simple noise reduction for low-quality audio (disabled for now due to stride issues)
+        # if audio_rms < 0.05:  # Low-quality audio threshold
+        #     logger.info("Applying noise reduction for low-quality audio")
+        #     # Simple high-pass filter to reduce low-frequency noise
+        #     from scipy import signal
+        #     try:
+        #         # Design a high-pass filter (remove frequencies below 80 Hz)
+        #         nyquist = sample_rate / 2
+        #         cutoff = 80 / nyquist
+        #         b, a = signal.butter(4, cutoff, btype='high')
+        #         # Make a copy to avoid stride issues
+        #         audio_data = signal.filtfilt(b, a, audio_data.copy())
+        #         logger.info("Applied high-pass filter for noise reduction")
+        #     except ImportError:
+        #         logger.warning("scipy not available, skipping noise reduction")
+        #     except Exception as e:
+        #         logger.warning(f"Error applying noise reduction: {e}")
+        
+        # Transcribe the entire file with optimized settings for system audio
+        logger.info("Transcribing audio file with optimized settings...")
         result = transcriber.model.transcribe(
             audio_data,
             language="en",
@@ -72,25 +118,34 @@ def transcribe_audio_file(audio_file_path: str, model_size: str = "medium") -> D
             verbose=True,  # More detailed output
             word_timestamps=True,  # Get word-level timestamps
             condition_on_previous_text=True,  # Better context
-            temperature=0.0,  # More deterministic
-            compression_ratio_threshold=2.4,  # Better quality threshold
-            logprob_threshold=-1.0,  # Lower threshold for more content
-            no_speech_threshold=0.6  # Lower threshold to capture more speech
+            temperature=0.0,  # Deterministic for better quality
+            compression_ratio_threshold=2.4,  # Standard threshold
+            logprob_threshold=-1.0,  # Standard threshold
+            no_speech_threshold=0.6,  # Standard threshold
+            best_of=5,  # Try multiple decodings and pick the best
+            beam_size=5,  # Use beam search for better quality
+            patience=1.0,  # More patient beam search
+            length_penalty=1.0  # Don't penalize longer outputs
         )
         
         # Check if transcription produced meaningful content
         full_text = result.get('text', '').strip()
         segments = result.get('segments', [])
         
-        # Check for common "no audio" patterns
+        # Check for common "no audio" patterns (more lenient for low-quality audio)
         no_audio_patterns = ['you', 'um', 'uh', 'ah', 'hmm', '...', '']
         meaningful_content = False
         
-        if full_text and len(full_text) > 10:
+        if full_text and len(full_text) > 5:  # Lowered threshold for low-quality audio
             # Check if text contains more than just filler words
             words = full_text.lower().split()
-            meaningful_words = [w for w in words if w not in no_audio_patterns and len(w) > 2]
-            meaningful_content = len(meaningful_words) > 5
+            meaningful_words = [w for w in words if w not in no_audio_patterns and len(w) > 1]  # Lowered word length threshold
+            meaningful_content = len(meaningful_words) > 3  # Lowered threshold for low-quality audio
+            
+            # Additional check: if we have any segments with substantial text, consider it meaningful
+            if not meaningful_content and segments:
+                substantial_segments = [seg for seg in segments if len(seg.get('text', '').strip()) > 10]
+                meaningful_content = len(substantial_segments) > 2
         
         if not meaningful_content:
             logger.warning("No meaningful audio content detected")
@@ -179,12 +234,18 @@ def transcribe_batch_files(audio_dir: str, model_size: str = "small") -> List[Di
                 if audio_data.dtype != np.float32:
                     audio_data = audio_data.astype(np.float32)
                 
-                # Transcribe
+                # Transcribe with low-quality audio settings
                 result = transcriber.model.transcribe(
                     audio_data,
                     language="en",
                     task="transcribe",
-                    fp16=False
+                    fp16=False,
+                    temperature=0.2,  # Slightly higher for noisy audio
+                    compression_ratio_threshold=1.8,  # Lower threshold for low-quality audio
+                    logprob_threshold=-1.5,  # Much lower threshold for noisy audio
+                    no_speech_threshold=0.3,  # Much lower threshold to capture more speech
+                    best_of=3,  # Try multiple decodings and pick the best
+                    beam_size=3  # Use beam search for better quality
                 )
                 
                 # Create transcript

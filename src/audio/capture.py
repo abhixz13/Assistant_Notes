@@ -40,8 +40,10 @@ class AudioCapture:
         self.format = audio_config.get('format', 'wav')
         self.blackhole_device = audio_config.get('blackhole_device', 'BlackHole 2ch')
         
-        # Find BlackHole device
+        # Find BlackHole device or fall back to system default
         self.device_index = self._find_blackhole_device()
+        if self.device_index == 0:  # If no BlackHole found, use system default
+            self.logger.warning("BlackHole not found, using system default audio device")
         
         # Recording state
         self.is_recording = False
@@ -52,37 +54,40 @@ class AudioCapture:
     
     def _find_blackhole_device(self) -> int:
         """
-        Find audio device index by name or default to BlackHole.
+        Find BlackHole device for system audio capture.
         
         Returns:
-            Device index for the specified device
+            Device index for BlackHole or fallback device
         """
         try:
             devices = sd.query_devices()
-            
-            # First, try to find the specified device name
-            target_device = self.blackhole_device.lower()
+            self.logger.info(f"Available audio devices:")
             for i, device in enumerate(devices):
-                device_str = str(device).lower()
-                if target_device in device_str:
-                    self.logger.info(f"Found device '{self.blackhole_device}' at index {i}: {device}")
+                self.logger.info(f"  {i}: {device.get('name', 'Unknown')} (in: {device.get('max_input_channels', 0)}, out: {device.get('max_output_channels', 0)})")
+            
+            # First, try to find BlackHole specifically
+            for i, device in enumerate(devices):
+                device_name = device.get('name', '').lower()
+                if 'blackhole' in device_name and device.get('max_input_channels', 0) > 0:
+                    self.logger.info(f"Found BlackHole device at index {i}: {device}")
                     return i
             
-            # If not found, try to find by name attribute
+            # If BlackHole not found, look for any input device that might capture system audio
             for i, device in enumerate(devices):
-                if hasattr(device, 'name') and target_device in device.name.lower():
-                    self.logger.info(f"Found device '{self.blackhole_device}' by name at index {i}: {device}")
+                device_name = device.get('name', '').lower()
+                if (device.get('max_input_channels', 0) > 0 and 
+                    ('system' in device_name or 'audio' in device_name or 'output' in device_name)):
+                    self.logger.info(f"Found potential system audio device at index {i}: {device}")
                     return i
             
-            # If still not found, try to find BlackHole as fallback
+            # Fallback to any input device
             for i, device in enumerate(devices):
-                device_str = str(device).lower()
-                if 'blackhole' in device_str:
-                    self.logger.info(f"BlackHole device not found, using BlackHole at index {i}: {device}")
+                if device.get('max_input_channels', 0) > 0:
+                    self.logger.info(f"Using fallback input device at index {i}: {device}")
                     return i
             
-            # Default to device 0 if nothing found
-            self.logger.warning(f"Device '{self.blackhole_device}' not found, using default device 0")
+            # Last resort - device 0
+            self.logger.warning(f"No suitable audio input device found, using device 0")
             return 0
             
         except Exception as e:

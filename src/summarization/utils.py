@@ -17,10 +17,10 @@ from pathlib import Path
 
 from utils.config import ConfigManager
 from utils.logger import get_logger
-from .llama_local import MixtralProcessor
+from .custom_model import CustomModelProcessor
 
 
-def process_transcript(transcript_path: str, output_dir: Optional[str] = None) -> Dict:
+def process_transcript(transcript_path: str, output_dir: Optional[str] = None, expertise_level: str = "moderate", model_override: Optional[str] = None) -> Dict:
     """
     Process a transcript file and generate enhanced notes.
     
@@ -39,20 +39,12 @@ def process_transcript(transcript_path: str, output_dir: Optional[str] = None) -
         with open(transcript_path, 'r') as f:
             transcript = json.load(f)
         
-        # Initialize processor
-        processor = MixtralProcessor()
-        
-        if not processor.model:
-            logger.warning("Mixtral model not loaded, using fallback processing")
-            enhanced_transcript = processor._fallback_enhance_transcript(transcript)
-        else:
-            # Enhance transcript
-            logger.info("Enhancing transcript with AI processing")
-            enhanced_transcript = processor.enhance_transcript(transcript)
+        # Initialize processor with model override
+        processor = CustomModelProcessor(model_override)
         
         # Enhance transcript
-        logger.info("Enhancing transcript with AI processing")
-        enhanced_transcript = processor.enhance_transcript(transcript)
+        logger.info(f"Enhancing transcript with AI processing (expertise level: {expertise_level})")
+        enhanced_transcript = processor.enhance_transcript(transcript, expertise_level)
         
         # Save enhanced notes
         if output_dir:
@@ -90,11 +82,7 @@ def process_batch_transcripts(transcript_dir: str, output_dir: Optional[str] = N
         logger.info(f"Found {len(transcript_files)} transcript files to process")
         
         # Initialize processor once
-        processor = MixtralProcessor()
-        
-        if not processor.model:
-            logger.error("Mixtral model not loaded, cannot process transcripts")
-            return []
+        processor = CustomModelProcessor()
         
         enhanced_transcripts = []
         
@@ -150,22 +138,16 @@ def save_enhanced_notes(enhanced_transcript: Dict, output_dir: str) -> str:
         
         # Generate filenames
         base_name = original_filename.replace('.wav', '').replace('.mp3', '')
-        json_filename = f"enhanced_{base_name}_{timestamp}.json"
-        md_filename = f"notes_{base_name}_{timestamp}.md"
+        txt_filename = f"notes_{base_name}_{timestamp}.txt"
         
-        # Save JSON version
-        json_path = output_path / json_filename
-        with open(json_path, 'w') as f:
-            json.dump(enhanced_transcript, f, indent=2)
+        # Save TXT version
+        txt_path = output_path / txt_filename
+        txt_content = create_txt_notes(enhanced_transcript)
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(txt_content)
         
-        # Save Markdown version
-        md_path = output_path / md_filename
-        markdown_content = create_markdown_notes(enhanced_transcript)
-        with open(md_path, 'w') as f:
-            f.write(markdown_content)
-        
-        logger.info(f"Enhanced notes saved: {json_path}, {md_path}")
-        return str(json_path)
+        logger.info(f"Enhanced notes saved: {txt_path}")
+        return str(txt_path)
         
     except Exception as e:
         logger.error(f"Error saving enhanced notes: {e}")
@@ -243,6 +225,81 @@ def create_markdown_notes(enhanced_transcript: Dict) -> str:
         return f"# Error Creating Notes\n\nError: {str(e)}"
 
 
+def create_txt_notes(enhanced_transcript: Dict) -> str:
+    """
+    Create formatted TXT notes from enhanced transcript.
+    
+    Args:
+        enhanced_transcript: Enhanced transcript dictionary
+        
+    Returns:
+        Formatted TXT content
+    """
+    try:
+        # Extract components
+        enhanced_notes = enhanced_transcript.get('enhanced_notes', {})
+        metadata = enhanced_transcript.get('metadata', {})
+        
+        # Build TXT content
+        txt_parts = []
+        
+        # Title
+        title = enhanced_notes.get('title', 'YouTube Video Notes')
+        txt_parts.append(f"{title}")
+        txt_parts.append("=" * len(title))
+        txt_parts.append("")
+        
+        # Video Information
+        txt_parts.append("VIDEO INFORMATION")
+        txt_parts.append("-" * 20)
+        txt_parts.append(f"Video: {title}")
+        txt_parts.append(f"Video Transcript ID: {metadata.get('filename', 'unknown')}")
+        txt_parts.append(f"Duration: {metadata.get('duration_formatted', 'Unknown')}")
+        txt_parts.append(f"Model: {enhanced_notes.get('metadata', {}).get('model_used', 'Unknown')}")
+        txt_parts.append("")
+        
+        # Summary
+        summary = enhanced_notes.get('summary', '')
+        if summary:
+            txt_parts.append("KEY TOPICS")
+            txt_parts.append("-" * 20)
+            txt_parts.append("")
+            txt_parts.append("1. SUMMARY")
+            txt_parts.append(summary)
+            txt_parts.append("")
+        
+        # Key Discussion Points
+        key_discussion_points = enhanced_notes.get('key_discussion_points', {})
+        if key_discussion_points.get('content'):
+            txt_parts.append("2. KEY DISCUSSION POINTS")
+            txt_parts.append(key_discussion_points['content'])
+            txt_parts.append("")
+        
+        # Additional Details
+        additional_details = enhanced_notes.get('additional_details', {})
+        if additional_details.get('content'):
+            txt_parts.append("3. ADDITIONAL DETAILS")
+            txt_parts.append(additional_details['content'])
+            txt_parts.append("")
+        
+        # Quick Reference
+        topics = enhanced_notes.get('metadata', {}).get('topics', [])
+        if topics:
+            txt_parts.append("QUICK REFERENCE")
+            txt_parts.append("-" * 20)
+            txt_parts.append(f"Main Topics: {', '.join(topics[:5])}")
+            txt_parts.append("Focus: Key concepts and practical applications")
+            txt_parts.append("Format: Simple, scannable structure")
+            txt_parts.append("")
+        
+        return "\n".join(txt_parts)
+        
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"Error creating TXT notes: {e}")
+        return f"Error Creating Notes\n\nError: {str(e)}"
+
+
 def get_processing_status() -> Dict:
     """
     Get the status of the processing module.
@@ -251,13 +308,14 @@ def get_processing_status() -> Dict:
         Status dictionary
     """
     try:
-        processor = MixtralProcessor()
+        processor = CustomModelProcessor()
+        status = processor.get_status()
         return {
             'module': 'processing',
-            'model_loaded': processor.model is not None,
-            'model_path': processor.model_path,
+            'model_loaded': status.get('status') == 'ready',
+            'model_path': status.get('api_url', 'http://localhost:11434/v1'),
             'config_loaded': True,
-            'status': 'ready' if processor.model else 'model_not_loaded'
+            'status': status.get('status', 'unknown')
         }
     except Exception as e:
         return {

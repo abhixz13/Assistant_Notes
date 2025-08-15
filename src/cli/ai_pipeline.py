@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-# Add src to path
+# Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
 from audio.capture import AudioCapture
@@ -97,14 +97,55 @@ class AIVideoPipeline:
             click.echo(f"❌ Error stopping recording: {e}")
             return None
     
-    def process_recording(self, audio_file_path: str, youtube_url: Optional[str] = None, title: Optional[str] = None):
+    def process_recording(self, audio_file_path: str, youtube_url: Optional[str] = None, title: Optional[str] = None, expertise_level: str = "moderate"):
         """Process the recorded audio through the full pipeline."""
         try:
+            # Support passing an existing JSON transcript to skip transcription
+            if audio_file_path.lower().endswith('.json'):
+                click.echo("📝 Using existing transcript JSON; skipping transcription...")
+                with open(audio_file_path, 'r') as f:
+                    transcript = json.load(f)
+                # Ensure required fields
+                transcript.setdefault('metadata', {})
+                if youtube_url:
+                    transcript['metadata']['youtube_url'] = youtube_url
+                if title:
+                    transcript['metadata']['title'] = title
+                else:
+                    title = transcript['metadata'].get('title') or self._generate_title_from_content(
+                        transcript.get('full_text') or ' '.join([s.get('text','') for s in transcript.get('segments', [])])
+                    )
+                    transcript['metadata']['title'] = title
+                transcript['metadata']['generated_at'] = datetime.now().isoformat()
+
+                # Generate notes
+                click.echo(f"🧠 Generating AI-focused notes from existing transcript (expertise level: {expertise_level})...")
+                processor = CustomModelProcessor()
+                enhanced_transcript = processor.enhance_transcript(transcript, expertise_level)
+
+                # Save notes in TXT format with Title_Date naming
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                clean_title = clean_title.replace(' ', '_')[:50]
+                notes_filename = f"{clean_title}_{timestamp}.txt"
+                notes_path = f"data/notes/{notes_filename}"
+
+                notes_content = self._format_notes_as_txt(enhanced_transcript, title, youtube_url)
+                Path("data/notes").mkdir(parents=True, exist_ok=True)
+                with open(notes_path, 'w', encoding='utf-8') as f:
+                    f.write(notes_content)
+
+                click.echo(f"✅ AI notes saved: {notes_filename}")
+                click.echo("---")
+                click.echo("🎉 Pipeline completed successfully!")
+                click.echo(f"📄 Transcript: {audio_file_path}")
+                click.echo(f"📝 Notes: {notes_path}")
+                return audio_file_path, notes_path
+
             # Step 1: Transcribe
             click.echo("🔤 Transcribing audio...")
-            from utils.config import ConfigManager
             # Read model size from config with 'medium' fallback
-            cfg = ConfigManager()
+            cfg = self.config
             model_size = cfg.get_transcription_config().get('model_size', 'medium')
             transcript = transcribe_audio_file(audio_file_path, model_size=model_size)
             
@@ -153,9 +194,9 @@ class AIVideoPipeline:
             click.echo(f"✅ Transcript saved: {transcript_filename}")
             
             # Step 2: Generate AI notes
-            click.echo("🧠 Generating AI-focused notes...")
+            click.echo(f"🧠 Generating AI-focused notes (expertise level: {expertise_level})...")
             processor = CustomModelProcessor()
-            enhanced_transcript = processor.enhance_transcript(transcript)
+            enhanced_transcript = processor.enhance_transcript(transcript, expertise_level)
             
             # Step 3: Save notes in TXT format
             notes_filename = f"{clean_title}_{timestamp}.txt"
@@ -214,53 +255,81 @@ class AIVideoPipeline:
             return "AI Video Summary"
     
     def _format_notes_as_txt(self, enhanced_transcript: dict, title: str, youtube_url: Optional[str] = None) -> str:
-        """Format enhanced notes as plain text."""
+        """Format enhanced notes as structured, cohesive text."""
         notes = enhanced_transcript.get('enhanced_notes', {})
         
         lines = []
+        
+        # Header
         lines.append("=" * 80)
-        lines.append(f"AI VIDEO SUMMARY")
+        lines.append("AI VIDEO SUMMARY")
         lines.append("=" * 80)
         lines.append(f"Title: {title}")
         lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        expertise_level = notes.get('metadata', {}).get('expertise_level', 'moderate').title()
+        lines.append(f"Expertise Level: {expertise_level}")
         if youtube_url:
             lines.append(f"Source: {youtube_url}")
         lines.append("=" * 80)
         lines.append("")
         
-        # Summary
+        # Main Summary Content
         if notes.get('summary'):
-            lines.append("SUMMARY")
-            lines.append("-" * 40)
-            lines.append(notes['summary'])
+            # Clean up the summary to make it more cohesive
+            summary = notes['summary']
+            
+            # Remove the generic introduction if it exists
+            if summary.startswith("This comprehensive discussion covers several key areas in AI and technology:"):
+                summary = summary.replace("This comprehensive discussion covers several key areas in AI and technology:", "").strip()
+            
+            # Remove the generic conclusion if it exists
+            if "These topics collectively provide a comprehensive understanding" in summary:
+                summary = summary.split("These topics collectively provide a comprehensive understanding")[0].strip()
+            
+            lines.append(summary)
             lines.append("")
         
-        # Additional Details
+        # Additional Details (only if they contain meaningful content)
         additional_details = notes.get('additional_details', {})
-        if additional_details.get('related_technologies'):
-            lines.append("RELATED TECHNOLOGIES")
-            lines.append("-" * 40)
-            for tech in additional_details['related_technologies']:
-                lines.append(f"• {tech}")
-            lines.append("")
         
-        if additional_details.get('learning_resources'):
-            lines.append("LEARNING RESOURCES")
-            lines.append("-" * 40)
-            for resource in additional_details['learning_resources']:
-                lines.append(f"• {resource}")
-            lines.append("")
+        # Only include sections that have actual content
+        sections_added = []
         
-        if additional_details.get('best_practices'):
-            lines.append("BEST PRACTICES")
-            lines.append("-" * 40)
-            for practice in additional_details['best_practices']:
-                lines.append(f"• {practice}")
-            lines.append("")
+        if additional_details.get('related_technologies') and len(additional_details['related_technologies']) > 0:
+            tech_list = [tech for tech in additional_details['related_technologies'] if tech.strip() and tech.strip() != "Development tools" and tech.strip() != "Testing frameworks"]
+            if tech_list:
+                lines.append("RELATED TECHNOLOGIES")
+                lines.append("-" * 40)
+                for tech in tech_list:
+                    lines.append(f"• {tech}")
+                lines.append("")
+                sections_added.append("technologies")
         
-        lines.append("=" * 80)
-        lines.append("End of AI Video Summary")
-        lines.append("=" * 80)
+        if additional_details.get('learning_resources') and len(additional_details['learning_resources']) > 0:
+            resource_list = [resource for resource in additional_details['learning_resources'] if resource.strip() and resource.strip() != "Official documentation" and resource.strip() != "Community forums"]
+            if resource_list:
+                lines.append("LEARNING RESOURCES")
+                lines.append("-" * 40)
+                for resource in resource_list:
+                    lines.append(f"• {resource}")
+                lines.append("")
+                sections_added.append("resources")
+        
+        if additional_details.get('best_practices') and len(additional_details['best_practices']) > 0:
+            practice_list = [practice for practice in additional_details['best_practices'] if practice.strip() and practice.strip() != "Code review" and practice.strip() != "Testing strategies"]
+            if practice_list:
+                lines.append("BEST PRACTICES")
+                lines.append("-" * 40)
+                for practice in practice_list:
+                    lines.append(f"• {practice}")
+                lines.append("")
+                sections_added.append("practices")
+        
+        # Only add footer if we have meaningful content
+        if sections_added:
+            lines.append("=" * 80)
+            lines.append("End of AI Video Summary")
+            lines.append("=" * 80)
         
         return "\n".join(lines)
 
@@ -288,13 +357,17 @@ def cli():
 @cli.command()
 @click.option('--youtube-url', help='YouTube URL for metadata')
 @click.option('--title', help='Video title (auto-generated if not provided)')
-def start(youtube_url: Optional[str], title: Optional[str]):
+@click.option('--expertise', 'expertise_level', 
+              type=click.Choice(['beginner', 'moderate', 'expert'], case_sensitive=False),
+              default='moderate', help='Expertise level for summary generation')
+def start(youtube_url: Optional[str], title: Optional[str], expertise_level: str):
     """Start recording system audio for AI video summarization."""
     global pipeline
     
     try:
         pipeline = AIVideoPipeline()
         pipeline.start_recording(youtube_url=youtube_url, title=title)
+        pipeline.expertise_level = expertise_level  # Store expertise level
         
         # Set up signal handler for Ctrl+C
         signal.signal(signal.SIGINT, signal_handler)
@@ -314,11 +387,14 @@ def start(youtube_url: Optional[str], title: Optional[str]):
 @click.argument('audio_file', type=click.Path(exists=True))
 @click.option('--youtube-url', help='YouTube URL for metadata')
 @click.option('--title', help='Video title (auto-generated if not provided)')
-def process(audio_file: str, youtube_url: Optional[str], title: Optional[str]):
+@click.option('--expertise', 'expertise_level', 
+              type=click.Choice(['beginner', 'moderate', 'expert'], case_sensitive=False),
+              default='moderate', help='Expertise level for summary generation')
+def process(audio_file: str, youtube_url: Optional[str], title: Optional[str], expertise_level: str):
     """Process an existing audio file through the AI pipeline."""
     try:
         pipeline = AIVideoPipeline()
-        pipeline.process_recording(audio_file, youtube_url=youtube_url, title=title)
+        pipeline.process_recording(audio_file, youtube_url=youtube_url, title=title, expertise_level=expertise_level)
         
     except Exception as e:
         click.echo(f"❌ Error: {e}")

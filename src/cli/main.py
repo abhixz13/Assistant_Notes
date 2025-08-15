@@ -12,6 +12,7 @@ from typing import Optional
 sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.config import config
+from utils.config import ConfigManager
 from utils.logger import get_logger
 
 
@@ -450,10 +451,53 @@ def test():
 
 
 @cli.command()
+@click.option('--file', '-f', required=True, help='Path to enhanced transcript JSON file')
+def show_topics(file):
+    """Show extracted topics from processed transcript."""
+    import json
+    from pathlib import Path
+    
+    try:
+        file_path = Path(file)
+        if not file_path.exists():
+            click.echo(f"❌ File not found: {file}")
+            return
+            
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        
+        enhanced_notes = data.get('enhanced_notes', {})
+        metadata = enhanced_notes.get('metadata', {})
+        topics = metadata.get('topics', [])
+        topic_summaries = metadata.get('topic_summaries', {})
+        
+        if not topics:
+            click.echo("No topics found in this file.")
+            return
+            
+        click.echo(f"📚 Extracted Topics ({len(topics)}):")
+        click.echo("=" * 40)
+        
+        for i, topic in enumerate(topics, 1):
+            click.echo(f"{i}. {topic}")
+            if topic in topic_summaries:
+                summary = topic_summaries[topic][:100] + "..." if len(topic_summaries[topic]) > 100 else topic_summaries[topic]
+                click.echo(f"   💡 {summary}")
+            click.echo("")
+            
+    except Exception as e:
+        click.echo(f"❌ Error reading file: {e}")
+
+
+@cli.command()
 @click.option('--transcript', '-t', required=True, help='Path to transcript JSON file')
 @click.option('--output', '-o', help='Output directory for enhanced notes')
-@click.option('--model-size', default='8x7b', help='Mixtral model size (8x7b)')
-def process(transcript, output, model_size):
+@click.option('--model', type=click.Choice(['deepseek', 'gpt-4o-mini', 'mixtral'], case_sensitive=False),
+              default=None, help='AI model for summarization (overrides config)')
+@click.option('--expertise', type=click.Choice(['beginner', 'moderate', 'expert'], case_sensitive=False),
+              default='moderate', help='Expertise level for summary generation')
+@click.option('--model-size', default='8x7b', help='Model size (legacy parameter)')
+def process(transcript, output, model, expertise, model_size):
     """Process a transcript and generate enhanced AI scholar notes."""
     from summarization.utils import process_transcript, validate_transcript_file
     
@@ -469,7 +513,7 @@ def process(transcript, output, model_size):
         output = config.get_storage_config().get('notes_path', 'data/notes')
     
     try:
-        enhanced_transcript = process_transcript(transcript, output)
+        enhanced_transcript = process_transcript(transcript, output, expertise, model)
         
         if 'error' in enhanced_transcript:
             click.echo(f"❌ Processing failed: {enhanced_transcript['error']}")
