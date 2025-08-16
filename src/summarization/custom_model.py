@@ -12,10 +12,12 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import json
 import logging
-from typing import Dict, List, Optional, Any
+import re
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from difflib import SequenceMatcher
 
 from utils.config import ConfigManager
 from utils.logger import get_logger
@@ -66,6 +68,12 @@ class CustomModelProcessor:
         
         # Expertise level configuration
         self.default_expertise_level = self.summarization_config.get('default_expertise_level', 'moderate')
+        
+        # Windowed topic extraction configuration
+        self.window_size = self.summarization_config.get('topic_window_size', 3000)
+        self.window_overlap = self.summarization_config.get('topic_window_overlap', 500)
+        self.topics_per_window = self.summarization_config.get('topics_per_window', 5)
+        self.max_final_topics = self.summarization_config.get('max_final_topics', 12)
 
     def _configure_model(self, selected_model: str):
         """Configure model-specific settings based on selection from settings.yaml."""
@@ -469,19 +477,73 @@ class CustomModelProcessor:
             return "Error assembling topic summaries."
     
     def _extract_topics(self, text: str, title: str) -> List[str]:
-        """Extract 8-12 key topics from the transcript using title as context."""
+        """Extract key topics from the full transcript using sliding windows."""
         try:
-            self.logger.info(f"Extracting topics from text length: {len(text)}")
+            self.logger.info(f"Extracting topics from text length: {len(text)} characters")
             self.logger.info(f"Title: {title}")
-            self.logger.info(f"Text preview: {text[:200]}...")
             
+            # Use windowed extraction for comprehensive coverage
+            return self._extract_topics_windowed(text, title)
+       
+        except Exception as e:
+            self.logger.error(f"Error extracting topics: {e}")
+            return []
+    
+    def _extract_topics_windowed(self, text: str, title: str) -> List[str]:
+        """Extract topics using sliding windows across the full transcript."""
+        try:
+            text_length = len(text)
+            all_topics = []
+            
+            # Create sliding windows
+            windows = self._create_sliding_windows(text)
+            self.logger.info(f"Created {len(windows)} windows for text of {text_length} characters")
+            
+            # Extract topics from each window
+            for i, window_text in enumerate(windows):
+                self.logger.info(f"Processing window {i+1}/{len(windows)} ({len(window_text)} chars)")
+                window_topics = self._extract_topics_from_window(window_text, title, i+1)
+                all_topics.extend(window_topics)
+            
+            # Deduplicate and rank topics
+            final_topics = self._deduplicate_and_rank_topics(all_topics, title)
+            
+            self.logger.info(f"Final topics ({len(final_topics)}): {final_topics}")
+            return final_topics
+            
+        except Exception as e:
+            self.logger.error(f"Error in windowed topic extraction: {e}")
+            return []
+    
+    def _create_sliding_windows(self, text: str) -> List[str]:
+        """Create overlapping windows across the text."""
+        windows = []
+        start = 0
+        
+        while start < len(text):
+            end = min(start + self.window_size, len(text))
+            window = text[start:end]
+            windows.append(window)
+            
+            # Move to next window with overlap
+            start += (self.window_size - self.window_overlap)
+            
+            # Stop if we've covered the entire text
+            if end >= len(text):
+                break
+        
+        return windows
+    
+    def _extract_topics_from_window(self, window_text: str, title: str, window_num: int) -> List[str]:
+        """Extract topics from a single window."""
+        try:
             # Get topic extraction prompt from PromptManager
             prompt_config = PromptManager.get_topic_extraction_prompt()
             
-            # Format the prompt with actual data
+            # Format the prompt with window data
             prompt = prompt_config["template"].format(
                 title=title,
-                text_preview=text[:3000]
+                text_preview=window_text
             )
 
             messages = [
@@ -491,50 +553,110 @@ class CustomModelProcessor:
 
             response = self._make_api_request(messages, self.concept_extraction_tokens)
             if response:
-                try:
-                    # Try to extract JSON array from the response
-                    response_clean = response.strip()
-                    
-                    # Find the first occurrence of a JSON array
-                    start_idx = response_clean.find('[')
-                    end_idx = response_clean.find(']')
-                    
-                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        json_part = response_clean[start_idx:end_idx + 1]
-                        topics = json.loads(json_part)
-                        result = [str(t).strip() for t in topics[:12] if str(t).strip()]
-                        self.logger.info(f"Successfully extracted {len(result)} topics: {result}")
-                        return result
-                    else:
-                        # Try direct JSON parsing
-                        topics = json.loads(response_clean)
-                        result = [str(t).strip() for t in topics[:12] if str(t).strip()]
-                        self.logger.info(f"Successfully extracted {len(result)} topics: {result}")
-                        return result
-                        
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"JSON decode error: {e}")
-                    self.logger.error(f"Response: {response[:500]}...")  # Truncate for logging
-                    
-                    # Fallback: try to extract topics manually from the response
-                    try:
-                        # Look for quoted strings that might be topics
-                        import re
-                        topic_matches = re.findall(r'"([^"]+)"', response)
-                        if topic_matches:
-                            result = [t.strip() for t in topic_matches[:12] if t.strip() and len(t.strip()) > 3]
-                            self.logger.info(f"Fallback extracted {len(result)} topics: {result}")
-                            return result
-                    except Exception as fallback_error:
-                        self.logger.error(f"Fallback extraction failed: {fallback_error}")
-                    
-                    pass
-            self.logger.warning("No response from API or failed to parse topics")
-            return []  # Fallback if no topics are found
-       
-        except Exception as e:
-            self.logger.error(f"Error extracting topics: {e}")
+                topics = self._parse_topics_response(response)
+                # Limit topics per window
+                limited_topics = topics[:self.topics_per_window]
+                self.logger.info(f"Window {window_num} extracted {len(limited_topics)} topics: {limited_topics}")
+                return limited_topics
+            
             return []
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting topics from window {window_num}: {e}")
+            return []
+    
+    def _parse_topics_response(self, response: str) -> List[str]:
+        """Parse topics from AI response."""
+        try:
+            response_clean = response.strip()
+            
+            # Try to extract JSON array from the response
+            start_idx = response_clean.find('[')
+            end_idx = response_clean.find(']')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_part = response_clean[start_idx:end_idx + 1]
+                topics = json.loads(json_part)
+                return [str(t).strip() for t in topics if str(t).strip()]
+            else:
+                # Try direct JSON parsing
+                topics = json.loads(response_clean)
+                return [str(t).strip() for t in topics if str(t).strip()]
+                
+        except json.JSONDecodeError:
+            # Fallback: extract quoted strings
+            topic_matches = re.findall(r'"([^"]+)"', response)
+            if topic_matches:
+                return [t.strip() for t in topic_matches if t.strip() and len(t.strip()) > 3]
+        
+        return []
+    
+    def _deduplicate_and_rank_topics(self, all_topics: List[str], title: str) -> List[str]:
+        """Deduplicate topics and rank by semantic similarity to title."""
+        if not all_topics:
+            return []
+        
+        # Remove exact duplicates while preserving order
+        unique_topics = []
+        seen = set()
+        
+        for topic in all_topics:
+            topic_lower = topic.lower().strip()
+            if topic_lower not in seen:
+                unique_topics.append(topic)
+                seen.add(topic_lower)
+        
+        # Score topics by semantic similarity to title and order
+        scored_topics = []
+        for i, topic in enumerate(unique_topics):
+            similarity_score = self._calculate_semantic_similarity(topic, title)
+            order_score = 1.0 / (i + 1)  # Earlier topics get higher scores
+            combined_score = (similarity_score * 0.7) + (order_score * 0.3)
+            
+            scored_topics.append((topic, combined_score, similarity_score, order_score))
+        
+        # Sort by combined score (descending)
+        scored_topics.sort(key=lambda x: x[1], reverse=True)
+        
+        # Log scoring details
+        self.logger.info("Topic scoring details:")
+        for topic, combined, similarity, order in scored_topics[:self.max_final_topics]:
+            self.logger.info(f"  '{topic}': similarity={similarity:.3f}, order={order:.3f}, combined={combined:.3f}")
+        
+        # Return top topics
+        final_topics = [topic for topic, _, _, _ in scored_topics[:self.max_final_topics]]
+        return final_topics
+    
+    def _calculate_semantic_similarity(self, topic: str, title: str) -> float:
+        """Calculate semantic similarity between topic and title."""
+        try:
+            # Normalize text
+            topic_clean = re.sub(r'[^\w\s]', '', topic.lower())
+            title_clean = re.sub(r'[^\w\s]', '', title.lower())
+            
+            # Word overlap similarity
+            topic_words = set(topic_clean.split())
+            title_words = set(title_clean.split())
+            
+            if not topic_words or not title_words:
+                return 0.0
+            
+            # Jaccard similarity (intersection over union)
+            intersection = len(topic_words.intersection(title_words))
+            union = len(topic_words.union(title_words))
+            jaccard_score = intersection / union if union > 0 else 0.0
+            
+            # String similarity using SequenceMatcher
+            sequence_score = SequenceMatcher(None, topic_clean, title_clean).ratio()
+            
+            # Combined similarity (weighted average)
+            combined_similarity = (jaccard_score * 0.6) + (sequence_score * 0.4)
+            
+            return combined_similarity
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating similarity for '{topic}' vs '{title}': {e}")
+            return 0.0
         
     def _generate_title(self, text: str, metadata: Dict) -> str:
         """Generate a descriptive title for the content."""

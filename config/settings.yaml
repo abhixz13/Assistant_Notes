@@ -45,6 +45,12 @@ summarization:
   topic_summary_tokens: 300  # Reasonable size for topic summaries
   topic_summary_max_workers: 3
   
+  # Windowed topic extraction settings
+  topic_window_size: 3000  # Characters per window
+  topic_window_overlap: 500  # Character overlap between windows
+  topics_per_window: 5  # Max topics extracted per window
+  max_final_topics: 12  # Max topics in final result
+  
   # Expertise level settings
   default_expertise_level: "moderate"  # beginner, moderate, expert
 

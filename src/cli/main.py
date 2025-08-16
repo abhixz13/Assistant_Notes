@@ -5,8 +5,11 @@ Provides command-line interface for all modules.
 
 import click
 import sys
+import json
+import glob
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
+from datetime import datetime
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -591,6 +594,236 @@ def process_status():
     
     if 'error' in status:
         click.echo(f"   Error: {status['error']}")
+
+
+@cli.command()
+def smart_process():
+    """Interactive processing - choose between YouTube or live audio."""
+    from cli.video_selector import VideoSelector
+    
+    selector = VideoSelector()
+    choice = selector.show_processing_choice()
+    
+    if choice == 'youtube':
+        youtube_workflow()
+    else:
+        live_workflow()
+
+def youtube_workflow():
+    """Complete YouTube processing workflow."""
+    from cli.video_selector import VideoSelector
+    from audio.youtube_downloader import YouTubeDownloader
+    
+    downloader = YouTubeDownloader()
+    selector = VideoSelector()
+    
+    # Option to download new videos
+    if click.confirm("📥 Download new YouTube videos?"):
+        while True:
+            url = click.prompt("🔗 Enter YouTube URL (or 'done' to finish)", type=str)
+            if url.lower() == 'done':
+                break
+            
+            try:
+                base_name, metadata = downloader.download_audio(url)
+                click.echo(f"✅ Downloaded: {metadata['title']}")
+            except Exception as e:
+                click.echo(f"❌ Download failed: {e}")
+    
+    # Show and select videos for processing
+    videos = downloader.list_downloaded_videos()
+    selected_videos = selector.select_videos_for_processing(videos)
+    
+    if not selected_videos:
+        click.echo("No videos selected for processing.")
+        return
+    
+    # Process each selected video sequentially
+    process_videos_sequentially(selected_videos)
+
+def process_videos_sequentially(videos: List[Dict]):
+    """Process selected videos one by one through the full pipeline."""
+    from summarization.utils import process_transcript
+    
+    total = len(videos)
+    
+    for i, video in enumerate(videos, 1):
+        base_name = video['base_name']
+        click.echo(f"\n🔄 Processing video {i}/{total}: {video['title']}")
+        
+        try:
+            # Step 1: Transcribe audio
+            click.echo("📝 Transcribing audio...")
+            audio_file = video['audio_file']
+            
+            transcript_path = f"data/transcripts/{base_name}_transcribed.json"
+            
+            # Use chunked processor for long videos
+            from transcription.chunked_processor import ChunkedAudioProcessor
+            
+            # Check audio duration to decide processing method
+            import soundfile as sf
+            audio_info = sf.info(audio_file)
+            duration_minutes = audio_info.duration / 60
+            
+            if duration_minutes > 30:  # Use chunked processing for videos longer than 30 minutes
+                click.echo(f"📊 Long video detected ({duration_minutes:.1f} minutes), using intelligent chunking...")
+                processor = ChunkedAudioProcessor(
+                    chunk_duration_minutes=60,
+                    overlap_seconds=30,
+                    model_size="small"  # Use smaller model for efficiency
+                )
+                transcript = processor.process_long_audio(audio_file)
+            else:
+                click.echo(f"📊 Short video ({duration_minutes:.1f} minutes), using direct processing...")
+                from transcription.utils import transcribe_audio_file
+                transcript = transcribe_audio_file(audio_file)
+            
+            # Save with custom filename
+            with open(transcript_path, 'w') as f:
+                json.dump(transcript, f, indent=2)
+            
+            click.echo(f"✅ Transcript saved: {transcript_path}")
+            
+            # Step 2: Generate AI summary
+            click.echo("🧠 Generating AI summary...")
+            enhanced_transcript = process_transcript(
+                transcript_path,
+                output_dir="data/notes"
+            )
+            
+            # Step 3: Save topics separately
+            click.echo("🏷️ Extracting topics...")
+            save_topics_file(base_name, enhanced_transcript)
+            
+            # Step 4: Rename summary file to match naming convention
+            rename_summary_file(base_name)
+            
+            click.echo(f"✅ Completed: {video['title']}")
+            
+        except Exception as e:
+            click.echo(f"❌ Failed to process {video['title']}: {e}")
+            continue
+    
+    click.echo(f"\n🎉 Processing complete! Processed {total} videos.")
+
+def save_topics_file(base_name: str, enhanced_transcript: Dict):
+    """Save extracted topics to separate file."""
+    topics_path = f"data/transcripts/{base_name}_topics_extracted.json"
+    
+    enhanced_notes = enhanced_transcript.get('enhanced_notes', {})
+    metadata = enhanced_notes.get('metadata', {})
+    topics = metadata.get('topics', [])
+    topic_summaries = metadata.get('topic_summaries', {})
+    
+    topics_data = {
+        'base_name': base_name,
+        'extraction_timestamp': datetime.now().isoformat(),
+        'total_topics': len(topics),
+        'topics': topics,
+        'topic_summaries': topic_summaries,
+        'title': enhanced_notes.get('title', 'Unknown')
+    }
+    
+    with open(topics_path, 'w') as f:
+        json.dump(topics_data, f, indent=2)
+
+def rename_summary_file(base_name: str):
+    """Rename the generated summary file to match naming convention."""
+    # Find the most recent notes file
+    notes_pattern = "data/notes/notes_*"
+    notes_files = glob.glob(notes_pattern)
+    
+    if notes_files:
+        # Get the most recent file
+        latest_file = max(notes_files, key=lambda x: Path(x).stat().st_mtime)
+        
+        # Rename to our convention
+        new_name = f"data/notes/{base_name}_summary.txt"
+        Path(latest_file).rename(new_name)
+
+def live_workflow():
+    """Live audio processing workflow."""
+    click.echo("🎤 Live Audio Processing")
+    duration = click.prompt("⏱️ Recording duration (seconds)", type=int, default=300)
+    
+    click.echo(f"🔴 Starting {duration} second recording...")
+    click.echo("📢 Make sure audio is playing and will be captured by BlackHole")
+    
+    # Call existing record command
+    from audio.capture import AudioCapture
+    
+    config = ConfigManager()
+    capture = AudioCapture(config.get_audio_config())
+    audio_file = capture.record(duration)
+    
+    click.echo(f"✅ Recording saved: {audio_file}")
+    
+    # Ask if user wants to transcribe immediately
+    if click.confirm("📝 Transcribe the recording now?"):
+        click.echo("Processing with existing live audio workflow...")
+
+@cli.command()
+@click.option('--url', required=True, help='YouTube video URL')
+def download_youtube(url):
+    """Download YouTube video audio for later processing."""
+    from audio.youtube_downloader import YouTubeDownloader
+    
+    downloader = YouTubeDownloader()
+    
+    try:
+        base_name, metadata = downloader.download_audio(url)
+        click.echo(f"✅ Downloaded: {metadata['title']}")
+        click.echo(f"📁 Saved as: {base_name}")
+        click.echo(f"📍 Location: data/downloads/{base_name}.*")
+    except Exception as e:
+        click.echo(f"❌ Download failed: {e}")
+
+@cli.command()
+def list_videos():
+    """List all downloaded YouTube videos."""
+    from cli.video_selector import VideoSelector
+    
+    selector = VideoSelector()
+    videos = selector.downloader.list_downloaded_videos()
+    
+    selector.show_downloaded_videos(videos)
+    
+    if videos:
+        click.echo(f"\n📊 Total: {len(videos)} downloaded videos")
+        total_size = sum(v.get('file_size_mb', 0) for v in videos)
+        click.echo(f"💾 Total size: {total_size:.1f} MB")
+
+@cli.command() 
+def youtube_status():
+    """Show YouTube processing status and folder information."""
+    from audio.youtube_downloader import YouTubeDownloader
+    
+    downloader = YouTubeDownloader()
+    
+    click.echo("📊 YouTube Processing Status")
+    click.echo("=" * 40)
+    
+    # Check directories
+    for name, path in [
+        ("Downloads", downloader.downloads_dir),
+        ("Transcripts", downloader.transcripts_dir), 
+        ("Notes", downloader.notes_dir)
+    ]:
+        exists = "✅" if path.exists() else "❌"
+        click.echo(f"{exists} {name}: {path}")
+    
+    # Count files
+    videos = downloader.list_downloaded_videos()
+    transcripts = len(list(downloader.transcripts_dir.glob("*_transcribed.json")))
+    summaries = len(list(downloader.notes_dir.glob("*_summary.txt")))
+    topics = len(list(downloader.transcripts_dir.glob("*_topics_extracted.json")))
+    
+    click.echo("\n📈 File Counts:")
+    click.echo(f"   📺 Downloaded videos: {len(videos)}")
+    click.echo(f"   📝 Transcripts: {transcripts}")
+    click.echo(f"   📄 Summaries: {summaries}")
+    click.echo(f"   🏷️  Topics files: {topics}")
 
 
 if __name__ == '__main__':

@@ -38,17 +38,14 @@ class PromptManager:
             Dict containing system message and user prompt template
         """
         return {
-            "system":
-        """Extract 3-4 specific, non-overlapping topics explicitly present in the transcript. Use short noun phrases (~3–7 words), each ≤ 80 characters, grounded in the transcript’s wording. When the transcript enumerates a named set (e.g., types, taxonomy, spectrum), include ONE umbrella topic that names that set using its wording (e.g., "Agent taxonomy: …"). Collapse near-duplicates (singular/plural, synonyms). Exclude vague buckets (e.g., "Overview", "Implementation", "Software Development") and any promo/CTA content. Order topics by first appearance. Return a JSON array of double-quoted strings ONLY—no code fences, comments, or trailing commas."
+            "system": """Extract 3-4 specific, non-overlapping topics explicitly present in the transcript. Use short noun phrases (~3–7 words), each ≤ 80 characters, grounded in the transcript's wording. When the transcript enumerates a named set (e.g., types, taxonomy, spectrum), include ONE umbrella topic that names that set using its wording (e.g., "Agent taxonomy: …"). Collapse near-duplicates (singular/plural, synonyms). Exclude vague buckets (e.g., "Overview", "Implementation", "Software Development") and any promo/CTA content. Order topics by first appearance. Return a JSON array of double-quoted strings ONLY—no code fences, comments, or trailing commas.""",
+            
+            "template": """Title: {title}
 
-        template:
-        Title: {title}
+Transcript (truncated):
+{text_preview}
 
-        Transcript (truncated):
-        {text_preview}
-
-        JSON array only:
-        """
+JSON array only:"""
         }
         
     
